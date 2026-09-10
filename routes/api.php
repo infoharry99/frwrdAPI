@@ -69,6 +69,7 @@ Route::get('/countriesAll', [AuthController::class, 'GetallCountry']);
 
 // Appointments & Services
 Route::post('/appointments', [AuthController::class, 'appointmentsAPIPOST']);
+Route::post('/appointments/', [AuthController::class, 'appointmentsAPIPOST']);
 Route::put('/appointments/{id}', [AuthController::class, 'appointmentputApi']);
 Route::get('/appointments/{id}', [AuthController::class, 'appointmentfilterApi']);
 Route::get('/appointmentstwo/{id}', [AuthController::class, 'appointmentfilterApitwo']);
@@ -77,6 +78,7 @@ Route::get('/appointments', [AuthController::class, 'appointmentsAPIGET']);
 Route::get('/appointment', [AppointmentController::class, 'saveAllAppointments']);
 Route::get('/allappointment', [AppointmentController::class, 'GetallAppointments']);
 Route::post('/services', [AuthController::class, 'servicesAPIPOST']);
+Route::post('/services/', [AuthController::class, 'servicesAPIPOST']);
 Route::get('/services/{id}', [AuthController::class, 'servicesAPIgetbyid']);
 Route::get('/service/{id}', [AuthController::class, 'getbyidShowService']);
 Route::get('/save-all-client-student-appointments', [AuthController::class, 'saveAllClientsStudentAppointments']);
@@ -140,16 +142,26 @@ Route::post('/create-payment-intent', [AuthController::class, 'paymentGetwaystri
 Route::prefix('admin')->group(function () {
     // Auth & Profile
     Route::post('/login', [AdminAuthController::class, 'login']);
-    Route::get('/client/profile/{clientid}', [AdminAuthController::class, 'getClientProfile']);
+    Route::get('/client/profile/{clientid?}', [AdminAuthController::class, 'getClientProfile']);
     Route::post('/client/mark-first-login', [AdminAuthController::class, 'markFirstLoginCompleted']);
     Route::delete('/delete-student/{clientid}/{student_id}', [AdminAuthController::class, 'deleteStudent']);
     Route::post('/forget_password', [AdminAuthController::class, 'forgetpassword']);
     Route::post('/changepassword/{clientid}', [AdminAuthController::class, 'changepassword']);
+    Route::post('/oldnewpassword', [AdminAuthController::class, 'oldnewpassword']);
+
+    // Admin Client List
+    Route::get('/all-clients', [AdminAuthController::class, 'getAllClients']);
+    Route::get('/clientsdata/{clientid}', [AdminAuthController::class, 'getClientById']);
+    Route::get('/clientDataget', [AdminAuthController::class, 'ClientsetDatabae']);
+    Route::post('/clientemailsend', [AdminAuthController::class, 'clientemailsend']);
+    Route::post('/clientemailsend/', [AdminAuthController::class, 'clientemailsend']);
+    Route::post('/clients', [AdminAuthController::class, 'clientAPIPOST']);
+    Route::post('/students', [AdminAuthController::class, 'studentCreate']);
+    Route::post('/enquiry', [AdminAuthController::class, 'enquiryAPIPOST']);
 
     // Branch 1017 & Branch 28866 Clients
     Route::get('/all-clientsBranch1017', [AdminAuthController::class, 'getBranch1017Clients']);
     Route::get('/all-clientsBranch28866', [AdminAuthController::class, 'getBranch28866Clients']);
-    Route::get('/all-clients', [AdminAuthController::class, 'getAllClients']);
     Route::get('/all-clients-dropdown1017', [AdminAuthController::class, 'getAllClientsDropdown1017']);
     Route::get('/all-clients-dropdown28866', [AdminAuthController::class, 'getAllClientsDropdown28866']);
 
@@ -212,9 +224,54 @@ Route::prefix('admin')->group(function () {
     Route::get('/holidays/upcoming', [AdminPackageController::class, 'UpcomingHolidays']);
     Route::post('/terms/accept', [AdminPackageController::class, 'AcceptTerms']);
 
-    // Admin Appointments & Ratings
+    // Admin Client Packages
+    Route::post('/client-packages', [AdminAuthController::class, 'createClientPackageSingleTable']);
+    Route::post('/client-package/reschedule', [AdminAuthController::class, 'updatePackageRescheduleCount']);
+    Route::get('/client-packages/{clientid}', [AdminAuthController::class, 'getClientPackageByClientId']);
+    Route::get('/client-packagesid/{id}', [AdminAuthController::class, 'getClientPackageById']);
+    Route::put('/client-packagesupdate/{id}', [AdminAuthController::class, 'updateClientPackageById']);
+    Route::post('/client-packagesfree', [AdminAuthController::class, 'createClientPackageSingleTabletwo']);
+    Route::post('/client-packagesfree/', [AdminAuthController::class, 'createClientPackageSingleTabletwo']);
+    Route::get('/client-packagesfree/{clientid}', [AdminAuthController::class, 'getClientPackageByClientIdtwo']);
+    Route::delete('/client-packagesfree/{id}', [AdminAuthController::class, 'deleteClientPackageById']);
+    Route::delete('/client-packagesclientid/{clientid}', [AdminAuthController::class, 'deleteClientPackageByClientId']);
+    Route::get('/freeassismentstatus/{client_id}', [AdminAuthController::class, 'FreeAssismentstatuscheck']);
+    Route::get('/clientbookdata/{id}', [AdminAuthController::class, 'getClientBookData']);
+
+    // Subjects & Filters
+    Route::get('/subjects', [AdminAuthController::class, 'subjectsAPIGET']);
+    Route::get('/subjectsalldata', [AdminAuthController::class, 'GetAlldatasubject']);
+    Route::match(['get', 'post'], '/subjectFilter', [AdminAuthController::class, 'ClientSubjectnameFilterData']);
+    Route::match(['get', 'post'], '/subjectFilter/', [AdminAuthController::class, 'ClientSubjectnameFilterData']);
+    Route::get('/location', [AdminAuthController::class, 'locationAPIGET']);
+    Route::get('/locationalldata', [AdminAuthController::class, 'GetAlldatalocation']);
+    Route::get('/countries', [AdminAuthController::class, 'saveAllCountry']);
+    Route::get('/countriesAll', [AdminAuthController::class, 'GetallCountry']);
+
+    // Admin Appointments & Services
+    Route::post('/appointments', [AdminAuthController::class, 'appointmentsAPIPOST']);
+    Route::post('/appointments/', [AdminAuthController::class, 'appointmentsAPIPOST']);
+    Route::put('/appointments/{id}', [AdminAuthController::class, 'appointmentputApi']);
+    Route::get('/appointments/{id}', [AdminAuthController::class, 'appointmentfilterApi']);
+    Route::get('/appointmentstwo/{id}', [AdminAuthController::class, 'appointmentfilterApitwo']);
+    Route::get('/appointmentsthree/{id}', [AdminAuthController::class, 'appointmentfilterApithree']);
+    Route::get('/appointments', [AdminAuthController::class, 'appointmentsAPIGET']);
     Route::get('/appointment', [AdminAppointmentController::class, 'saveAllAppointments']);
     Route::get('/allappointment', [AdminAppointmentController::class, 'GetallAppointments']);
+    Route::post('/services', [AdminAuthController::class, 'servicesAPIPOST']);
+    Route::post('/services/', [AdminAuthController::class, 'servicesAPIPOST']);
+    Route::get('/services/{id}', [AdminAuthController::class, 'servicesAPIgetbyid']);
+    Route::get('/service/{id}', [AdminAuthController::class, 'getbyidShowService']);
+    Route::get('/client/status-check', [AdminAuthController::class, 'autoStatusCheck']);
+    Route::get('/clientpricestatus/{clientid}', [AdminAuthController::class, 'priceStatuseclientid']);
+
+    // Admin Invoices & Payments
+    Route::post('/proformainvoice', [AdminAuthController::class, 'proformaInvoiceAPIPOST']);
+    Route::get('/proformainvoice', [AdminAuthController::class, 'proformaInvoiceAPIGet']);
+    Route::post('/proformainvoicetakepayment/{id}', [AdminAuthController::class, 'proformaInvoicetakepaymentAPIPOST']);
+    Route::post('/create-payment-intent', [AdminAuthController::class, 'paymentGetwaystripe']);
+
+    // Admin Ratings & Reviews
     Route::post('/reviewsdoctor', [AdminRatingController::class, 'createReview']);
     Route::get('/reviewsdoctor', [AdminRatingController::class, 'getAllReviews']);
     Route::get('/reviewsdoctorcount', [AdminRatingController::class, 'getAverageRatings']);

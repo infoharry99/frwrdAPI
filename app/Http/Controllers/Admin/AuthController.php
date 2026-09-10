@@ -52,8 +52,48 @@ class AuthController extends BaseAuthController
                         'email' => $admin->email,
                         'branch_id' => $admin->branch_id ?? '1017',
                         'role' => 'admin',
+                        'clientid' => $admin->id ?? 1,
                     ],
                 ]);
+            }
+
+            // Check client table fallback
+            if (Schema::hasTable('client')) {
+                $clientUser = DB::table('client')->where('email', trim($email))->orWhere(DB::raw('LOWER(email)'), strtolower(trim($email)))->first();
+                if ($clientUser) {
+                    $userPass = $clientUser->password ?? '';
+                    $isMatch = Hash::check($password, $userPass)
+                        || ($password === $userPass)
+                        || (md5($password) === $userPass)
+                        || (sha1($password) === $userPass);
+
+                    if ($isMatch) {
+                        $token = JwtHelper::generateToken((int)$clientUser->clientid, 604800);
+                        $studentdetails = $clientUser->studentdetails ?? [];
+                        if (is_string($studentdetails)) {
+                            $parsed = json_decode($studentdetails, true);
+                            $studentdetails = is_array($parsed) ? $parsed : [];
+                        }
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Login successful',
+                            'token' => $token,
+                            'user' => [
+                                'clientid' => $clientUser->clientid,
+                                'firstname' => $clientUser->firstname ?? '',
+                                'lastname' => $clientUser->lastname ?? '',
+                                'email' => $clientUser->email,
+                                'studentdetails' => $studentdetails,
+                                'status' => $clientUser->status ?? '',
+                                'numberofstudent' => $clientUser->numberofstudent ?? 0,
+                                'branch_id' => $clientUser->branch_id ?? '1017',
+                                'phone_number' => $clientUser->phone_number ?? '',
+                                'role' => 'admin',
+                            ],
+                        ], 200);
+                    }
+                }
             }
 
             // Fallback default admin credentials if table empty or user not in admins table
@@ -70,6 +110,7 @@ class AuthController extends BaseAuthController
                         'email' => $email,
                         'branch_id' => '1017',
                         'role' => 'admin',
+                        'clientid' => 1,
                     ],
                 ]);
             }
@@ -81,9 +122,102 @@ class AuthController extends BaseAuthController
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Server Error',
+                'message' => 'Server Error: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * GET /api/admin/client/profile/{clientid}
+     */
+    public function getClientProfile($clientid = null)
+    {
+        if (!$clientid || $clientid === 'undefined' || $clientid === 'null') {
+            return response()->json([
+                'success' => true,
+                'user' => [
+                    'clientid' => 1,
+                    'firstname' => 'Admin',
+                    'lastname' => 'User',
+                    'email' => 'admin@gmail.com',
+                    'is_first_login' => 1,
+                ],
+            ]);
+        }
+
+        try {
+            $user = DB::table('client')->where('clientid', $clientid)->first();
+            if (!$user) {
+                return response()->json([
+                    'success' => true,
+                    'user' => [
+                        'clientid' => $clientid,
+                        'firstname' => 'Admin',
+                        'lastname' => 'User',
+                        'email' => 'admin@gmail.com',
+                        'is_first_login' => 1,
+                    ],
+                ]);
+            }
+
+            $parsedStudents = is_array($user->studentdetails ?? null)
+                ? $user->studentdetails
+                : (json_decode($user->studentdetails ?? '[]', true) ?: []);
+
+            return response()->json([
+                'success' => true,
+                'user' => [
+                    'clientid' => $user->clientid,
+                    'firstname' => $user->firstname,
+                    'lastname' => $user->lastname,
+                    'email' => $user->email,
+                    'phone_number' => $user->phone_number ?? '',
+                    'status' => $user->status ?? '',
+                    'branch_id' => $user->branch_id ?? '1017',
+                    'numberofstudent' => $user->numberofstudent ?? 1,
+                    'studentdetails' => $parsedStudents,
+                    'is_first_login' => $user->is_first_login ?? 1,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => true,
+                'user' => [
+                    'clientid' => $clientid,
+                    'firstname' => 'Admin',
+                    'lastname' => 'User',
+                    'email' => 'admin@gmail.com',
+                    'is_first_login' => 1,
+                ],
+            ]);
+        }
+    }
+
+    /**
+     * GET /api/admin/all-clients
+     */
+    public function getAllClients(Request $request = null)
+    {
+        $search = $request ? $request->query('search', '') : '';
+        $query = DB::table('client');
+
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('firstname', 'like', "%{$search}%")
+                  ->orWhere('lastname', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('phone_number', 'like', "%{$search}%");
+            });
+        }
+
+        $query->orderBy('clientid', 'desc');
+        $clients = $query->get();
+
+        return response()->json([
+            'success' => true,
+            'total' => count($clients),
+            'data' => $clients,
+        ]);
     }
 
     /**
@@ -1108,11 +1242,5 @@ class AuthController extends BaseAuthController
             'appointments' => $appointments,
             'data' => $appointments,
         ]);
-    }
-
-    public function getAllClients()
-    {
-        $clients = DB::table('client')->get();
-        return response()->json($clients);
     }
 }

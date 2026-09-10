@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
@@ -35,8 +36,8 @@ class AuthController extends Controller
      */
     public function login(Request $request)
     {
-        $email = $request->input('email');
-        $password = $request->input('password');
+        $email = trim($request->input('email', ''));
+        $password = (string)$request->input('password', '');
 
         if (!$email || !$password) {
             return response()->json(['success' => false, 'message' => 'Email and password required'], 400);
@@ -46,35 +47,82 @@ class AuthController extends Controller
             $user = Client::where('email', $email)->first();
 
             if (!$user) {
+                // Try case-insensitive search
+                $user = Client::where(DB::raw('LOWER(email)'), strtolower($email))->first();
+            }
+
+            if (!$user) {
+                // Fallback to direct DB query if Eloquent scope/hidden rules differ
+                $dbUser = DB::table('client')->where('email', $email)->orWhere(DB::raw('LOWER(email)'), strtolower($email))->first();
+                if ($dbUser) {
+                    $user = (object)[
+                        'clientid' => $dbUser->clientid,
+                        'firstname' => $dbUser->firstname ?? '',
+                        'lastname' => $dbUser->lastname ?? '',
+                        'email' => $dbUser->email,
+                        'password' => $dbUser->password ?? '',
+                        'studentdetails' => $dbUser->studentdetails ?? null,
+                        'status' => $dbUser->status ?? '',
+                        'numberofstudent' => $dbUser->numberofstudent ?? 0,
+                        'branch_id' => $dbUser->branch_id ?? '',
+                        'phone_number' => $dbUser->phone_number ?? '',
+                        'how_you_came_to_know' => $dbUser->how_you_came_to_know ?? '',
+                        'students' => $dbUser->students ?? null,
+                    ];
+                }
+            }
+
+            if (!$user) {
                 return response()->json(['success' => false, 'message' => 'Invalid email or password'], 401);
             }
 
-            // Check password (bcrypt)
-            if (!Hash::check($password, $user->password)) {
+            // Check password compatibility (bcrypt, plain text, md5, sha1)
+            $userPassword = $user->password ?? '';
+            $validPassword = Hash::check($password, $userPassword)
+                || ($password === $userPassword)
+                || (md5($password) === $userPassword)
+                || (sha1($password) === $userPassword);
+
+            if (!$validPassword) {
                 return response()->json(['success' => false, 'message' => 'Invalid email or password'], 401);
             }
 
             // Generate JWT token
-            $token = JwtHelper::generateToken($user->clientid, 3600);
+            $token = JwtHelper::generateToken((int)$user->clientid, 3600);
 
-            // Log login
-            DB::table('login_logs')->insert([
-                'clientid' => $user->clientid,
-                'email' => $user->email,
-            ]);
+            // Log login into login_logs (safely ignorable if schema mismatch)
+            try {
+                if (Schema::hasTable('login_logs')) {
+                    DB::table('login_logs')->insert([
+                        'clientid' => $user->clientid,
+                        'email' => $user->email,
+                    ]);
+                }
+            } catch (\Throwable $logEx) {
+                Log::warning('Login log insert skipped: ' . $logEx->getMessage());
+            }
+
+            // Parse studentdetails safely
+            $studentdetails = $user->studentdetails ?? [];
+            if (is_string($studentdetails)) {
+                $parsed = json_decode($studentdetails, true);
+                $studentdetails = is_array($parsed) ? $parsed : [];
+            } elseif (!is_array($studentdetails)) {
+                $studentdetails = [];
+            }
 
             $responseUser = [
                 'clientid' => $user->clientid,
-                'firstname' => $user->firstname,
-                'lastname' => $user->lastname,
+                'firstname' => $user->firstname ?? '',
+                'lastname' => $user->lastname ?? '',
                 'email' => $user->email,
-                'studentdetails' => is_array($user->studentdetails) ? $user->studentdetails : (json_decode($user->studentdetails ?? '[]', true) ?: []),
-                'status' => $user->status,
-                'numberofstudent' => $user->numberofstudent,
-                'branch_id' => $user->branch_id,
-                'phone_number' => $user->phone_number,
-                'how_you_came_to_know' => $user->how_you_came_to_know,
-                'students' => $user->students,
+                'studentdetails' => $studentdetails,
+                'status' => $user->status ?? '',
+                'numberofstudent' => $user->numberofstudent ?? 0,
+                'branch_id' => $user->branch_id ?? '',
+                'phone_number' => $user->phone_number ?? '',
+                'how_you_came_to_know' => $user->how_you_came_to_know ?? '',
+                'students' => $user->students ?? null,
             ];
 
             return response()->json([
@@ -85,7 +133,7 @@ class AuthController extends Controller
             ], 200);
         } catch (\Throwable $e) {
             Log::error('Login error: ' . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Internal Server Error'], 500);
+            return response()->json(['success' => false, 'message' => 'Internal Server Error: ' . $e->getMessage()], 500);
         }
     }
 
@@ -720,19 +768,6 @@ class AuthController extends Controller
         }
     }
 
-    /**
-     * GET /api/availability
-     */
-    public function AllContractorsavailability(Request $request)
-    {
-        try {
-            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
-            $res = $this->tutorCruncher->get('/contractor_availability/', $request->query(), $branchId, 'Contractors');
-            return response()->json($res);
-        } catch (\Throwable $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
-    }
 
     /**
      * GET /api/availabilityalldata
@@ -864,7 +899,134 @@ class AuthController extends Controller
      */
     public function saveAllContractors(Request $request)
     {
-        return response()->json(['message' => 'Sync triggered']);
+        try {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+            if (!$branchId) {
+                return response()->json(['error' => 'branch_id is required in params'], 400);
+            }
+
+            $branch = DB::table('branches')->where('branch_id', $branchId)->first();
+            if (!$branch) {
+                return response()->json(['error' => 'Branch not found'], 404);
+            }
+
+            $apiKeyRow = DB::table('branch_api_key')
+                ->where('branch_id', $branchId)
+                ->where('action', 'Contractors')
+                ->first();
+
+            if (!$apiKeyRow) {
+                return response()->json(['error' => 'No Contractors API key found for this branch'], 404);
+            }
+
+            $apiKey = $apiKeyRow->api_key;
+            $contractorList = DB::table('tutors')->where('branch_id', $branchId)->get();
+
+            $startDate = date('Y-m-d', strtotime('-3 months'));
+            $endDate = date('Y-m-d', strtotime('+6 months'));
+
+            foreach ($contractorList as $contractor) {
+                $contractorId = $contractor->id;
+
+                try {
+                    $response = Http::withHeaders([
+                        'Authorization' => "Token {$apiKey}",
+                        'Content-Type' => 'application/json',
+                    ])->get("https://app.tutorcruncher.com/api/contractors/{$contractorId}");
+
+                    if (!$response->successful()) {
+                        continue;
+                    }
+
+                    $fullContractor = $response->json();
+
+                    $availRes = Http::withHeaders([
+                        'Authorization' => "Token {$apiKey}",
+                        'Content-Type' => 'application/json',
+                    ])->get("https://app.tutorcruncher.com/api/contractor_availability/{$contractorId}/", [
+                        'start' => $startDate,
+                        'finish' => $endDate,
+                    ]);
+
+                    $availabilityList = $availRes->successful() ? $availRes->json() : [];
+                    $availableOnly = [];
+
+                    if (is_array($availabilityList)) {
+                        foreach ($availabilityList as $item) {
+                            $item['start'] = date('c', strtotime($item['start'] . ' +4 hours'));
+                            $item['finish'] = date('c', strtotime($item['finish'] . ' +4 hours'));
+                            $availableOnly[] = $item;
+                        }
+                    }
+
+                    $qualifications = !empty($fullContractor['qualifications']) ? implode(', ', $fullContractor['qualifications']) : null;
+
+                    $subjects = [];
+                    $qualLevels = [];
+                    $skillsList = [];
+
+                    if (!empty($fullContractor['skills']) && is_array($fullContractor['skills'])) {
+                        foreach ($fullContractor['skills'] as $skill) {
+                            if (!empty($skill['subject'])) {
+                                $subjects[] = $skill['subject'];
+                            }
+                            if (!empty($skill['qual_level']['name'])) {
+                                $qualLevels[] = $skill['qual_level']['name'];
+                            }
+                            $skillsList[] = [
+                                'subject' => $skill['subject']['name'] ?? ($skill['subject'] ?? null),
+                                'quallevel' => $skill['qual_level']['name'] ?? null,
+                            ];
+                        }
+                    }
+
+                    $quallevelData = !empty($qualLevels) ? implode(', ', array_unique($qualLevels)) : null;
+                    $subjectData = json_encode($subjects);
+                    $skillsData = json_encode($skillsList);
+                    $availabilityData = json_encode($availableOnly);
+
+                    DB::statement("
+                        INSERT INTO tutors (
+                            id, first_name, last_name, photo,
+                            qualifications, skills, subject, quallevel, town, country, availability
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON DUPLICATE KEY UPDATE
+                            first_name = VALUES(first_name),
+                            last_name = VALUES(last_name),
+                            photo = VALUES(photo),
+                            qualifications = VALUES(qualifications),
+                            skills = VALUES(skills),
+                            subject = VALUES(subject),
+                            quallevel = VALUES(quallevel),
+                            town = VALUES(town),
+                            country = VALUES(country),
+                            availability = VALUES(availability)
+                    ", [
+                        $fullContractor['id'],
+                        $fullContractor['first_name'] ?? '',
+                        $fullContractor['last_name'] ?? '',
+                        $fullContractor['photo'] ?? null,
+                        $qualifications,
+                        $skillsData,
+                        $subjectData,
+                        $quallevelData,
+                        $fullContractor['town'] ?? null,
+                        $fullContractor['country'] ?? null,
+                        $availabilityData,
+                    ]);
+
+                } catch (\Throwable $err) {
+                    // Ignore individual contractor error
+                }
+            }
+
+            return response()->json(['message' => 'All contractors saved successfully.']);
+
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1056,7 +1218,116 @@ class AuthController extends Controller
      */
     public function saveAllCountry(Request $request)
     {
-        return response()->json(['message' => 'Countries synced']);
+        $apiKey = '38a6db3d34b2fc558a0db4ca472bb81b1e0858e6';
+        $url = 'https://app.tutorcruncher.com/api/countries/';
+
+        try {
+            while ($url) {
+                $response = Http::withHeaders([
+                    'Authorization' => "Token {$apiKey}",
+                    'Content-Type' => 'application/json',
+                ])->get($url);
+
+                if (!$response->successful()) {
+                    break;
+                }
+
+                $data = $response->json();
+                $countriesList = $data['results'] ?? [];
+
+                foreach ($countriesList as $country) {
+                    $countryId = $country['id'];
+                    $detailRes = Http::withHeaders([
+                        'Authorization' => "Token {$apiKey}",
+                        'Content-Type' => 'application/json',
+                    ])->get("https://app.tutorcruncher.com/api/countries/{$countryId}");
+
+                    if ($detailRes->successful()) {
+                        $fullCountry = $detailRes->json();
+                        DB::statement("
+                            INSERT INTO countries (id, name, abbreviation, three_letter_iso, currency)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE
+                                name = VALUES(name),
+                                abbreviation = VALUES(abbreviation),
+                                three_letter_iso = VALUES(three_letter_iso),
+                                currency = VALUES(currency)
+                        ", [
+                            $fullCountry['id'],
+                            $fullCountry['name'] ?? '',
+                            $fullCountry['abbreviation'] ?? '',
+                            $fullCountry['three_letter_iso'] ?? '',
+                            $fullCountry['currency'] ?? '',
+                        ]);
+                    }
+                }
+
+                $url = $data['next'] ?? null;
+            }
+
+            return response()->json(['message' => 'Countries synced successfully.']);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /api/availability
+     */
+    public function AllContractorsavailability(Request $request)
+    {
+        try {
+            $branchId = $request->input('branch_id') ?? $request->query('branch_id');
+            if (!$branchId) {
+                return response()->json(['error' => 'branch_id is required'], 400);
+            }
+
+            $apiKeyRow = DB::table('branch_api_key')
+                ->where('branch_id', $branchId)
+                ->where('action', 'Contractors')
+                ->first();
+
+            if (!$apiKeyRow) {
+                return response()->json(['error' => 'API key not found for Contractors action'], 404);
+            }
+
+            $apiKey = $apiKeyRow->api_key;
+            $res = Http::withHeaders([
+                'Authorization' => "Token {$apiKey}",
+                'Content-Type' => 'application/json',
+            ])->get('https://app.tutorcruncher.com/api/contractors/');
+
+            if (!$res->successful()) {
+                return response()->json(['error' => 'Failed to fetch contractors from TutorCruncher'], 500);
+            }
+
+            $contractorList = $res->json()['results'] ?? [];
+            foreach ($contractorList as $contractor) {
+                $contractorId = $contractor['id'];
+                $availRes = Http::withHeaders([
+                    'Authorization' => "Token {$apiKey}",
+                    'Content-Type' => 'application/json',
+                ])->get("https://app.tutorcruncher.com/api/contractor_availability/{$contractorId}");
+
+                if ($availRes->successful()) {
+                    $availabilityList = $availRes->json();
+                    if (is_array($availabilityList)) {
+                        foreach ($availabilityList as $item) {
+                            DB::table('availabilityslot')->insert([
+                                'type' => $item['type'] ?? '',
+                                'start' => $item['start'] ?? null,
+                                'finish' => $item['finish'] ?? null,
+                                'apt_id' => $item['apt_id'] ?? null,
+                            ]);
+                        }
+                    }
+                }
+            }
+
+            return response()->json(['message' => 'All contractors availability saved successfully.']);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1480,6 +1751,109 @@ class AuthController extends Controller
      */
     public function saveAllClientsStudentAppointments(Request $request)
     {
-        return response()->json(['success' => true, 'message' => 'Synced appointments']);
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+        if (!$branchId) {
+            return response()->json(['error' => 'branch_id is required'], 400);
+        }
+
+        try {
+            $apiKeyRow = DB::table('branch_api_key')
+                ->where('branch_id', $branchId)
+                ->where('action', 'Appointment')
+                ->first();
+
+            if (!$apiKeyRow) {
+                return response()->json(['error' => 'API key not found'], 404);
+            }
+
+            $apiKey = $apiKeyRow->api_key;
+            $clients = DB::table('client')->where('branch_id', $branchId)->get();
+
+            $totalSaved = 0;
+            $finalData = [];
+
+            $now = time();
+            $startOfWeek = strtotime('last Sunday', $now);
+            if (date('w', $now) == 0) {
+                $startOfWeek = strtotime('today', $now);
+            }
+            $endOfWeek = strtotime('+6 days 23:59:59', $startOfWeek);
+
+            foreach ($clients as $client) {
+                $clientId = $client->clientid;
+                $clientEmail = $client->email;
+
+                $students = is_array($client->studentdetails) ? $client->studentdetails : json_decode($client->studentdetails ?? '[]', true);
+                if (empty($students) || !is_array($students)) continue;
+
+                foreach ($students as $st) {
+                    $studentId = $st['id'] ?? null;
+                    if (!$studentId) continue;
+
+                    try {
+                        $res = Http::withHeaders([
+                            'Authorization' => "Token {$apiKey}",
+                        ])->get("https://app.tutorcruncher.com/api/appointments/", [
+                            'recipient' => $studentId,
+                        ]);
+
+                        if (!$res->successful()) continue;
+
+                        $appointments = $res->json()['results'] ?? [];
+                        if (empty($appointments)) continue;
+
+                        $currentWeekAppointments = [];
+                        foreach ($appointments as $appt) {
+                            $apptTime = strtotime($appt['start']);
+                            if ($apptTime >= $startOfWeek && $apptTime <= $endOfWeek) {
+                                $currentWeekAppointments[] = $appt;
+                            }
+                        }
+
+                        if (empty($currentWeekAppointments)) continue;
+
+                        usort($currentWeekAppointments, fn($a, $b) => strtotime($a['start']) <=> strtotime($b['start']));
+                        $firstClass = $currentWeekAppointments[0];
+
+                        DB::statement("
+                            INSERT INTO client_student_appointments 
+                            (client_id, client_email, student_id, last_appointment_id, last_appointment_date, branch_id)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            ON DUPLICATE KEY UPDATE
+                                last_appointment_id = VALUES(last_appointment_id),
+                                last_appointment_date = VALUES(last_appointment_date)
+                        ", [
+                            $clientId,
+                            $clientEmail,
+                            $studentId,
+                            $firstClass['id'],
+                            $firstClass['start'],
+                            $branchId,
+                        ]);
+
+                        $totalSaved++;
+                        $finalData[] = [
+                            'client_id' => $clientId,
+                            'student_id' => $studentId,
+                            'last_appointment_id' => $firstClass['id'],
+                            'last_appointment_date' => $firstClass['start'],
+                        ];
+                    } catch (\Throwable $err) {
+                        // Ignore individual student error
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'branch_id' => $branchId,
+                'total_clients' => count($clients),
+                'total_saved' => $totalSaved,
+                'data' => $finalData,
+            ]);
+
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 }
