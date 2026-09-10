@@ -92,6 +92,7 @@ Route::get('/holidays', [PackageController::class, 'HolidayAllShow']);
 Route::get('/holidays/year/{year}', [PackageController::class, 'HolidayByYear']);
 Route::get('/holidays/upcoming', [PackageController::class, 'UpcomingHolidays']);
 Route::post('/terms/accept', [PackageController::class, 'AcceptTerms']);
+Route::get('/packages/status', [PackageController::class, 'getValidAndExpiredPackages']);
 
 // Client Packages (Paid & Free Assessments)
 Route::post('/client-packages', [AuthController::class, 'createClientPackageSingleTable']);
@@ -223,6 +224,7 @@ Route::prefix('admin')->group(function () {
     Route::get('/holidays/year/{year}', [AdminPackageController::class, 'HolidayByYear']);
     Route::get('/holidays/upcoming', [AdminPackageController::class, 'UpcomingHolidays']);
     Route::post('/terms/accept', [AdminPackageController::class, 'AcceptTerms']);
+    Route::get('/packages/status', [AdminPackageController::class, 'getValidAndExpiredPackages']);
 
     // Admin Client Packages
     Route::post('/client-packages', [AdminAuthController::class, 'createClientPackageSingleTable']);

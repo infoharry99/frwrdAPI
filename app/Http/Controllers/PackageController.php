@@ -235,4 +235,33 @@ class PackageController extends Controller
             return response()->json(['success' => false, 'message' => 'Error fetching upcoming holidays'], 500);
         }
     }
+
+    /**
+     * GET /api/packages/status
+     */
+    public function getValidAndExpiredPackages()
+    {
+        try {
+            $valid = DB::select("
+                SELECT * FROM packega 
+                WHERE DATE_ADD(start_date, INTERVAL duration_days DAY) >= CURDATE()
+            ");
+
+            $expired = DB::select("
+                SELECT * FROM packega 
+                WHERE DATE_ADD(start_date, INTERVAL duration_days DAY) < CURDATE()
+            ");
+
+            return response()->json([
+                'success' => true,
+                'validPackages' => $valid,
+                'expiredPackages' => $expired,
+            ]);
+        } catch (\Throwable $err) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching package status',
+            ], 500);
+        }
+    }
 }

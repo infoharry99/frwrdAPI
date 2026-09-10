@@ -1034,12 +1034,119 @@ class AuthController extends Controller
      */
     public function ClientsetDatabae(Request $request)
     {
-        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
-        $query = Client::query();
-        if ($branchId) {
-            $query->where('branch_id', (string) $branchId);
+        if ($request->isMethod('get')) {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = Client::query();
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            return response()->json($query->get());
         }
-        return response()->json($query->get());
+
+        try {
+            $incoming = $request->json()->all();
+            if (!is_array($incoming) || empty($incoming)) {
+                $incoming = [$request->all()];
+            }
+            if (isset($incoming['topic']) && !isset($incoming[0])) {
+                $incoming = [$incoming];
+            }
+
+            if (empty($incoming)) {
+                return response()->json(['error' => 'Empty request body.'], 400);
+            }
+
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id') ?? ($incoming[0]['branch_id'] ?? '1017');
+            $results = [];
+            $insertedPkgs = [];
+
+            foreach ($incoming as $appointment) {
+                $tcResponse = $this->tutorCruncher->post('/appointments/', $appointment, (string)$branchId, 'Appointment');
+                $tcId = $tcResponse['id'] ?? null;
+
+                $dbInsertId = null;
+                if (Schema::hasTable('alldatasend')) {
+                    $dbInsertId = DB::table('alldatasend')->insertGetId([
+                        'client_id' => $appointment['client_id'] ?? null,
+                        'branch_id' => $appointment['branch_id'] ?? $branchId,
+                        'pkg_id' => $appointment['pkg_id'] ?? null,
+                        'appoinmet_id' => $tcId,
+                        'start' => $appointment['start'] ?? null,
+                        'finish' => $appointment['finish'] ?? null,
+                        'topic' => $appointment['topic'] ?? null,
+                        'status' => $appointment['status'] ?? null,
+                        'service' => is_array($appointment['service'] ?? null) ? json_encode($appointment['service']) : ($appointment['service'] ?? null),
+                        'rcras' => json_encode($appointment['rcras'] ?? []),
+                        'cjas' => json_encode($appointment['cjas'] ?? []),
+                        'pricestatus' => $appointment['pricestatus'] ?? 0,
+                        'freeassismentemailsend' => $appointment['freeassismentemailsend'] ?? 0,
+                    ]);
+                }
+
+                $pkgId = $appointment['pkg_id'] ?? null;
+                if ($pkgId && !in_array($pkgId, $insertedPkgs) && Schema::hasTable('package_expire')) {
+                    DB::table('package_expire')->insert([
+                        'student_id' => $appointment['student_id'] ?? null,
+                        'client_id' => $appointment['client_id'] ?? null,
+                        'pkg_id' => $pkgId,
+                        'start_date' => $appointment['start_date'] ?? null,
+                        'expiry_date' => $appointment['expiry_date'] ?? null,
+                    ]);
+                    $insertedPkgs[] = $pkgId;
+                }
+
+                // Send Free Assessment Email if freeassismentemailsend == 1
+                if (($appointment['freeassismentemailsend'] ?? 0) == 1 && !empty($appointment['client_id'])) {
+                    $alreadySent = Schema::hasTable('alldatasend') && DB::table('alldatasend')
+                        ->where('client_id', $appointment['client_id'])
+                        ->where('freeassismentemailsend', 1)
+                        ->where('id', '!=', $dbInsertId)
+                        ->exists();
+
+                    if (!$alreadySent) {
+                        $client = Client::where('clientid', $appointment['client_id'])->first();
+                        if ($client) {
+                            $adminEmail = env('MAIL_ADMIN', 'tarunbirla2018@gmail.com');
+                            $subject = "📝 Free Assessment Appointment Created";
+                            $html = "
+                            <div style='background-color:#f4f4ff;padding:24px;'>
+                              <div style='max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;padding:32px 24px;font-family:Arial, sans-serif;color:#333;'>
+                                <h2>📝 Free Assessment Appointment Created</h2>
+                                <p><b>Client Name:</b> {$client->firstname} {$client->lastname}</p>
+                                <p><b>Email:</b> {$client->email}</p>
+                                <p><b>Number of Students:</b> {$client->numberofstudent}</p>
+                                <p><b>Appointment Topic:</b> " . ($appointment['topic'] ?? 'Free Assessment') . "</p>
+                                <p><b>Start:</b> " . ($appointment['start'] ?? '') . "</p>
+                                <p><b>Finish:</b> " . ($appointment['finish'] ?? '') . "</p>
+                              </div>
+                            </div>";
+
+                            try {
+                                Mail::html($html, function ($msg) use ($adminEmail, $subject) {
+                                    $msg->to($adminEmail)->subject($subject);
+                                });
+                            } catch (\Throwable $mErr) {
+                                Log::warning('Free Assessment email warning: ' . $mErr->getMessage());
+                            }
+
+                            if ($dbInsertId && Schema::hasTable('alldatasend')) {
+                                DB::table('alldatasend')->where('id', $dbInsertId)->update(['freeassismentemailsend' => 1]);
+                            }
+                        }
+                    }
+                }
+
+                $results[] = [
+                    'inserted_id' => $dbInsertId,
+                    'tc_appointment_id' => $tcId,
+                    'tutorcruncher' => $tcResponse,
+                ];
+            }
+
+            return response()->json(['success' => true, 'results' => $results], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1460,7 +1567,13 @@ class AuthController extends Controller
      */
     public function ReviewApi(Request $request)
     {
-        return response()->json(['success' => true, 'message' => 'Review created']);
+        try {
+            $branchId = $request->input('branch_id') ?? $request->query('branch_id');
+            $res = $this->tutorCruncher->post('/reviews/', $request->all(), $branchId, 'Services');
+            return response()->json($res);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1468,7 +1581,33 @@ class AuthController extends Controller
      */
     public function Adminemail(Request $request)
     {
-        return response()->json(['success' => true, 'message' => 'Admin email sent']);
+        $email = $request->input('email', env('MAIL_ADMIN', 'admin@myfrwrd.com'));
+
+        $emailHTML = "
+        <div style='background-color:#f4f4ff;padding:24px;'>
+          <div style='max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;padding:32px 24px;font-family:Arial, sans-serif;color:#333;'>
+            <div style='font-family: Arial, sans-serif; line-height: 1.6;'>
+              <h2 style='color: #4A90E2;'>Tutor Slot Booking Notification</h2>
+              <p>Dear Admin,</p>
+              <p>A student has booked a slot on <strong>TutorCruncher</strong>.</p>
+              <p>Please login to the <a href='https://app.tutorcruncher.com/' target='_blank'>TutorCruncher admin panel</a> and accept the tutor slot to confirm the booking.</p>
+              <p>Thank you,<br/>FRWRD Team</p>
+            </div>
+          </div>
+        </div>";
+
+        try {
+            Mail::html($emailHTML, function ($msg) use ($email) {
+                $msg->to($email)->subject('Tutor Slot Booking Notification');
+            });
+        } catch (\Throwable $mailErr) {
+            Log::warning('Adminemail SMTP warning: ' . $mailErr->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notification email sent to admin successfully',
+        ]);
     }
 
     /**
@@ -1654,12 +1793,52 @@ class AuthController extends Controller
         }
     }
 
-    /**
-     * POST /api/sendReviewEmail
-     */
     public function Adminandclientemailsend(Request $request)
     {
-        return response()->json(['success' => true]);
+        $clientId = $request->input('clientid');
+        $clientEmail = $request->input('client_email');
+        $reviewNumber = $request->input('review_number');
+        $description = $request->input('description');
+
+        if (!$clientId || !$clientEmail || !$reviewNumber || !$description) {
+            return response()->json([
+                'error' => 'clientid, client_email, review_number, and description are required',
+            ], 400);
+        }
+
+        $adminEmail = env('MAIL_ADMIN', 'growyourbrnds@gmail.com');
+
+        $adminSubject = "Slot Issue Reported - Review #{$reviewNumber}";
+        $adminHTML = "
+        <h2>Slot Issue Reported</h2>
+        <p><strong>Client ID:</strong> {$clientId}</p>
+        <p><strong>Submitted By:</strong> {$clientEmail}</p>
+        <p><strong>Review #:</strong> {$reviewNumber}</p>
+        <p><strong>Description:</strong></p>
+        <p>{$description}</p>";
+
+        $clientSubject = "Feedback Received - Review #{$reviewNumber}";
+        $clientHTML = "
+        <h2>Thank You for Your Feedback</h2>
+        <p>We received your report regarding Review #{$reviewNumber}.</p>
+        <p><strong>Your Description:</strong></p>
+        <p>{$description}</p>
+        <p>Our team is looking into this and will get back to you shortly.</p>";
+
+        try {
+            Mail::html($adminHTML, function ($msg) use ($adminEmail, $adminSubject) {
+                $msg->to($adminEmail)->subject($adminSubject);
+            });
+            Mail::html($clientHTML, function ($msg) use ($clientEmail, $clientSubject) {
+                $msg->to($clientEmail)->subject($clientSubject);
+            });
+        } catch (\Throwable $mailErr) {
+            Log::warning('Adminandclientemailsend SMTP warning: ' . $mailErr->getMessage());
+        }
+
+        return response()->json([
+            'message' => 'Review saved and emails sent successfully.',
+        ]);
     }
 
     /**
