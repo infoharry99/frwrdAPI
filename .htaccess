@@ -4,16 +4,10 @@ DirectoryIndex index.php public/index.php
     RewriteEngine On
 
     # ===================================================
-    # 1. CORS HEADERS (Preflight & Cross-Origin Allowance)
+    # 1. Handle Authorization Header
     # ===================================================
-    <IfModule mod_headers.c>
-        SetEnvIfNoCase Origin ".*" CORS_ORIGIN=$0
-        Header always set Access-Control-Allow-Origin "%{CORS_ORIGIN}e" env=CORS_ORIGIN
-        Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        Header always set Access-Control-Allow-Headers "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Auth-Token"
-        Header always set Access-Control-Allow-Credentials "true" env=CORS_ORIGIN
-        Header always set Access-Control-Max-Age "86400"
-    </IfModule>
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
     # ===================================================
     # 2. Block Direct Access to Sensitive Files (.env, etc.)
@@ -21,25 +15,19 @@ DirectoryIndex index.php public/index.php
     RewriteRule ^(\.env|\.git|composer\.(json|lock)|package\.(json|lock)|phpunit\.xml) - [F,L,NC]
 
     # ===================================================
-    # 3. Handle OPTIONS Preflight Directly
+    # 3. Handle OPTIONS Preflight Directly via index.php
     # ===================================================
     RewriteCond %{REQUEST_METHOD} OPTIONS
     RewriteRule ^(.*)$ index.php [QSA,L]
 
     # ===================================================
-    # 4. Handle Authorization Header
-    # ===================================================
-    RewriteCond %{HTTP:Authorization} .
-    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-
-    # ===================================================
-    # 5. Serve Existing Files from public/ Folder
+    # 4. Serve Existing Files from public/ Folder
     # ===================================================
     RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
     RewriteRule ^(.*)$ public/$1 [L]
 
     # ===================================================
-    # 6. Route All Remaining Requests to index.php
+    # 5. Route All Remaining Requests to index.php
     # ===================================================
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_FILENAME} !-f
