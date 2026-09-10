@@ -1139,9 +1139,13 @@ class AuthController extends Controller
     public function appointmentfilterApi(Request $request, $id)
     {
         try {
-            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
-            $res = $this->tutorCruncher->get("/appointments/{$id}/", [], $branchId, 'Appointment');
-            return response()->json($res);
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id') ?? '1017';
+            $res = $this->tutorCruncher->get('/appointments/', ['recipient' => $id], $branchId, 'Appointment');
+            return response()->json([
+                'success' => true,
+                'message' => 'Appointments filtered by recipient successfully.',
+                'data' => $res,
+            ]);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -1152,7 +1156,71 @@ class AuthController extends Controller
      */
     public function appointmentfilterApitwo(Request $request, $id)
     {
-        return $this->appointmentfilterApi($request, $id);
+        try {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id') ?? '1017';
+            if (!$id) {
+                return response()->json(['error' => 'Recipient ID is required in the URL.'], 400);
+            }
+
+            $ids = array_filter(array_map('trim', explode(',', (string)$id)));
+            $mergedAppointmentsRaw = [];
+            $rawResponses = [];
+
+            foreach ($ids as $recipientId) {
+                $res = $this->tutorCruncher->get('/appointments/', ['recipient' => $recipientId], $branchId, 'Appointment');
+                $list = [];
+                if (is_array($res)) {
+                    $list = $res['results'] ?? (isset($res[0]) ? $res : []);
+                }
+                $rawResponses[] = [
+                    'recipient_id' => $recipientId,
+                    'data' => $list,
+                ];
+                foreach ($list as $appt) {
+                    $mergedAppointmentsRaw[] = $appt;
+                }
+            }
+
+            // Deduplicate by appt id
+            $uniqueMap = [];
+            foreach ($mergedAppointmentsRaw as $appt) {
+                if (is_array($appt) && isset($appt['id'])) {
+                    $uniqueMap[$appt['id']] = $appt;
+                }
+            }
+            $mergedAppointments = array_values($uniqueMap);
+
+            // Join each appointment with alldatasend table where appoinmet_id = appt.id
+            $allData = [];
+            foreach ($mergedAppointments as &$appt) {
+                $apptId = $appt['id'] ?? null;
+                if (!$apptId) continue;
+
+                $dbRow = null;
+                if (Schema::hasTable('alldatasend')) {
+                    $dbRow = DB::table('alldatasend')->where('appoinmet_id', $apptId)->first();
+                }
+
+                if ($dbRow) {
+                    $appt['db'] = (array)$dbRow;
+                    $allData[] = $appt;
+                }
+            }
+            unset($appt);
+
+            return response()->json([
+                'alldata' => $allData,
+                'success' => true,
+                'message' => 'Appointments fetched for all recipient ID(s)',
+                'branch_id' => $branchId,
+                'recipient_ids' => array_values($ids),
+                'total_appointments' => count($mergedAppointments),
+                'data' => $mergedAppointments,
+                'raw_responses' => $rawResponses,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1160,7 +1228,47 @@ class AuthController extends Controller
      */
     public function appointmentfilterApithree(Request $request, $id)
     {
-        return $this->appointmentfilterApi($request, $id);
+        try {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id') ?? '1017';
+            if (!$id) {
+                return response()->json(['error' => 'Recipient ID is required in the URL.'], 400);
+            }
+
+            $ids = array_filter(array_map('trim', explode(',', (string)$id)));
+            $mergedAppointments = [];
+
+            foreach ($ids as $recipientId) {
+                $res = $this->tutorCruncher->get('/appointments/', ['recipient' => $recipientId], $branchId, 'Appointment');
+                $list = is_array($res) ? ($res['results'] ?? (isset($res[0]) ? $res : [])) : [];
+                foreach ($list as $appt) {
+                    $mergedAppointments[] = $appt;
+                }
+            }
+
+            $allData = [];
+            foreach ($mergedAppointments as $appt) {
+                $apptId = $appt['id'] ?? null;
+                if (!$apptId) continue;
+
+                $rows = [];
+                if (Schema::hasTable('alldatasend')) {
+                    $rows = DB::table('alldatasend')->where('appoinmet_id', $apptId)->get()->toArray();
+                }
+
+                if (!empty($rows)) {
+                    $appt['dbRows'] = array_map(function($r) { return (array)$r; }, $rows);
+                    $allData[] = $appt;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Filtered appointments fetched successfully.',
+                'data' => $allData,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -1398,8 +1506,8 @@ class AuthController extends Controller
         if ($branchId && Schema::hasColumn('client_package_data', 'branch_id')) {
             $query->where('branch_id', (string) $branchId);
         }
-        $pkgs = $query->get();
-        return response()->json($pkgs);
+        $pkgs = $query->orderBy('created_at', 'desc')->get();
+        return response()->json(['success' => true, 'data' => $pkgs]);
     }
 
     /**
@@ -1630,8 +1738,8 @@ class AuthController extends Controller
         if ($branchId && Schema::hasColumn('client_package_data_two', 'branch_id')) {
             $query->where('branch_id', (string) $branchId);
         }
-        $rows = $query->get();
-        return response()->json($rows);
+        $rows = $query->orderBy('created_at', 'desc')->get();
+        return response()->json(['success' => true, 'data' => $rows]);
     }
 
     /**
