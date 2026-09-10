@@ -5,6 +5,20 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
+// Fail-safe CORS Preflight Handler (Guarantees preflight passes in any server environment)
+if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
+    header("Access-Control-Allow-Origin: {$origin}");
+    header("Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    header("Access-Control-Allow-Headers: Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Auth-Token");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Max-Age: 86400");
+    header("Content-Length: 0");
+    header("Content-Type: text/plain");
+    http_response_code(200);
+    exit(0);
+}
+
 /*
 |--------------------------------------------------------------------------
 | Check If The Application Is Under Maintenance
