@@ -95,20 +95,39 @@ class AuthController extends Controller
     public function getClientProfile($clientid)
     {
         try {
-            $client = Client::where('clientid', $clientid)->first();
+            if (!$clientid) {
+                return response()->json(['success' => false, 'message' => 'clientid is required'], 400);
+            }
 
-            if (!$client) {
+            $user = Client::where('clientid', $clientid)->first();
+
+            if (!$user) {
                 return response()->json(['success' => false, 'message' => 'Client not found'], 404);
             }
 
-            $client->studentdetails = is_array($client->studentdetails)
-                ? $client->studentdetails
-                : (json_decode($client->studentdetails ?? '[]', true) ?: []);
+            $parsedStudents = is_array($user->studentdetails)
+                ? $user->studentdetails
+                : (json_decode($user->studentdetails ?? '[]', true) ?: []);
+
+            $responseUser = [
+                'clientid' => $user->clientid,
+                'firstname' => $user->firstname,
+                'lastname' => $user->lastname,
+                'email' => $user->email,
+                'phone_number' => $user->phone_number,
+                'status' => $user->status,
+                'branch_id' => $user->branch_id,
+                'numberofstudent' => $user->numberofstudent,
+                'how_you_came_to_know' => $user->how_you_came_to_know,
+                'students' => $user->students,
+                'studentdetails' => $parsedStudents,
+                'is_first_login' => $user->is_first_login,
+            ];
 
             return response()->json([
                 'success' => true,
-                'data' => $client,
-            ]);
+                'user' => $responseUser,
+            ], 200);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Internal Server Error'], 500);
         }
@@ -122,12 +141,29 @@ class AuthController extends Controller
         $clientId = $request->input('clientid');
 
         if (!$clientId) {
-            return response()->json(['success' => false, 'message' => 'clientid required'], 400);
+            return response()->json(['success' => false, 'message' => 'clientid is required'], 400);
         }
 
         try {
+            $user = Client::where('clientid', $clientId)->first();
+
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Client not found'], 404);
+            }
+
+            if ((int)$user->is_first_login === 1) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'First login already completed',
+                ], 200);
+            }
+
             Client::where('clientid', $clientId)->update(['is_first_login' => 1]);
-            return response()->json(['success' => true, 'message' => 'First login marked as completed']);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'First login status updated successfully',
+            ], 200);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Internal Server Error'], 500);
         }
@@ -136,8 +172,17 @@ class AuthController extends Controller
     /**
      * DELETE /api/delete-student/{clientid}/{student_id}
      */
-    public function deleteStudent($clientid, $student_id)
+    public function deleteStudent(Request $request, $clientid, $student_id)
     {
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+        if (!$student_id || !$clientid || !$branchId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'student_id, clientid & branch_id required',
+            ], 400);
+        }
+
         try {
             $client = Client::where('clientid', $clientid)->first();
             if (!$client) {
@@ -148,8 +193,29 @@ class AuthController extends Controller
                 ? $client->studentdetails
                 : (json_decode($client->studentdetails ?? '[]', true) ?: []);
 
+            $studentExists = false;
+            foreach ($students as $s) {
+                if (is_array($s) && (string)($s['id'] ?? '') === (string)$student_id) {
+                    $studentExists = true;
+                    break;
+                }
+            }
+
+            if (!$studentExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Student does not belong to this client',
+                ], 403);
+            }
+
+            try {
+                $this->tutorCruncher->delete("/recipients/{$student_id}/", [], (string)$branchId, 'Recipients');
+            } catch (\Throwable $tcErr) {
+                // proceed even if TutorCruncher call fails or is mocked
+            }
+
             $filteredStudents = array_values(array_filter($students, function ($s) use ($student_id) {
-                return (string)($s['id'] ?? '') !== (string)$student_id;
+                return is_array($s) && (string)($s['id'] ?? '') !== (string)$student_id;
             }));
 
             $client->studentdetails = $filteredStudents;
@@ -157,9 +223,13 @@ class AuthController extends Controller
 
             Student::where('studentid', $student_id)->delete();
 
-            return response()->json(['success' => true, 'message' => 'Student deleted successfully']);
+            return response()->json(['success' => true, 'message' => 'Student deleted successfully'], 200);
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => 'Error deleting student'], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete student',
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -369,28 +439,91 @@ class AuthController extends Controller
      */
     public function studentCreate(Request $request)
     {
-        $studentData = $request->all();
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
 
-        try {
-            $branchId = (string)($studentData['branch_id'] ?? '1017');
-            $tcRes = $this->tutorCruncher->post('/students/', $studentData, $branchId, 'Recipients');
+        if (!$branchId) {
+            return response()->json(['error' => 'branch_id is required in query'], 400);
+        }
 
-            if (!empty($tcRes['id'])) {
-                Student::updateOrInsert(
-                    ['studentid' => $tcRes['id']],
-                    [
-                        'studentfirstname' => $tcRes['first_name'] ?? ($studentData['first_name'] ?? ''),
-                        'studentlastname' => $tcRes['last_name'] ?? ($studentData['last_name'] ?? ''),
-                        'email' => $tcRes['email'] ?? ($studentData['email'] ?? ''),
-                        'clientid' => $studentData['client_id'] ?? null,
-                    ]
-                );
+        $students = $request->input('students') ?? $request->all();
+        if (!is_array($students) || (isset($students['first_name']) && !isset($students[0]))) {
+            $students = [$students];
+        }
+
+        if (empty($students)) {
+            return response()->json(['error' => 'Request must include at least one student.'], 400);
+        }
+
+        $results = [];
+
+        foreach ($students as $student) {
+            $firstName = $student['first_name'] ?? null;
+            $lastName = $student['last_name'] ?? null;
+            $payingClient = $student['paying_client'] ?? ($student['client_id'] ?? null);
+
+            if (!$firstName || !$lastName || !$payingClient) {
+                $results[] = [
+                    'success' => false,
+                    'student' => $student,
+                    'error' => 'Missing required fields: first_name, last_name, or paying_client.',
+                ];
+                continue;
             }
 
-            return response()->json($tcRes);
-        } catch (\Throwable $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            try {
+                $client = Client::where('clientid', $payingClient)->first();
+                if (!$client) {
+                    $results[] = [
+                        'success' => false,
+                        'student' => $student,
+                        'error' => "Client with ID {$payingClient} not found.",
+                    ];
+                    continue;
+                }
+
+                $tcRes = $this->tutorCruncher->post('/recipients/', [
+                    'first_name' => $firstName,
+                    'last_name' => $lastName,
+                    'paying_client' => (int)$payingClient,
+                ], (string)$branchId, 'Recipients');
+
+                $studentdetails = is_array($client->studentdetails)
+                    ? $client->studentdetails
+                    : (json_decode($client->studentdetails ?? '[]', true) ?: []);
+
+                $studentdetails[] = $tcRes;
+
+                $client->studentdetails = $studentdetails;
+                $client->save();
+
+                if (!empty($tcRes['id'])) {
+                    Student::updateOrInsert(
+                        ['studentid' => $tcRes['id']],
+                        [
+                            'studentfirstname' => $tcRes['first_name'] ?? $firstName,
+                            'studentlastname' => $tcRes['last_name'] ?? $lastName,
+                            'email' => $tcRes['email'] ?? ($student['email'] ?? ''),
+                            'clientid' => $payingClient,
+                        ]
+                    );
+                }
+
+                $results[] = ['success' => true, 'student' => $student, 'response' => $tcRes];
+            } catch (\Throwable $e) {
+                $results[] = [
+                    'success' => false,
+                    'student' => $student,
+                    'error' => $e->getMessage(),
+                ];
+            }
         }
+
+        return response()->json([
+            'success' => true,
+            'branch_id' => $branchId,
+            'message' => 'Student creation attempted for all records.',
+            'results' => $results,
+        ]);
     }
 
     /**
