@@ -5,6 +5,22 @@
 
     RewriteEngine On
 
+    # ===================================================
+    # CORS HEADERS (Preflight & Cross-Origin Allowance)
+    # ===================================================
+    <IfModule mod_headers.c>
+        SetEnvIfNoCase Origin "https?://(localhost:[0-9]+|127\.0\.0\.1:[0-9]+|.*\.frwrdtutors\.com|.*\.smplyrefer\.com|.*\.nexteck\.uk)$" CORS_ORIGIN=$0
+        Header always set Access-Control-Allow-Origin "%{CORS_ORIGIN}e" env=CORS_ORIGIN
+        Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        Header always set Access-Control-Allow-Headers "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Auth-Token"
+        Header always set Access-Control-Allow-Credentials "true" env=CORS_ORIGIN
+        Header always set Access-Control-Max-Age "86400"
+    </IfModule>
+
+    # Pass OPTIONS Preflight to Laravel Front Controller
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ index.php [QSA,L]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
@@ -19,3 +35,10 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# php -- BEGIN cPanel-generated handler, do not edit
+# Set the “ea-php82” package as the default “PHP” programming language.
+<IfModule mime_module>
+  AddHandler application/x-httpd-ea-php82 .php .php8 .phtml
+</IfModule>
+# php -- END cPanel-generated handler, do not edit
