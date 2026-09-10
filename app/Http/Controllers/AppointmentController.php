@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\TutorCruncherService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class AppointmentController extends Controller
 {
@@ -21,11 +22,12 @@ class AppointmentController extends Controller
     public function saveAllAppointments(Request $request)
     {
         try {
-            $data = $this->tutorCruncher->get('/appointments/');
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $data = $this->tutorCruncher->get('/appointments/', $request->query(), $branchId, 'Appointment');
             $appointmentsList = $data['results'] ?? [];
 
             foreach ($appointmentsList as $app) {
-                $full = $this->tutorCruncher->get("/appointments/{$app['id']}");
+                $full = $this->tutorCruncher->get("/appointments/{$app['id']}", [], $branchId, 'Appointment');
                 if (empty($full['id'])) continue;
 
                 DB::table('appointment')->updateOrInsert(
@@ -54,10 +56,23 @@ class AppointmentController extends Controller
     /**
      * GET /api/allappointment
      */
-    public function GetallAppointments()
+    public function GetallAppointments(Request $request)
     {
         try {
-            $rows = DB::table('appointment')->get();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+            if ($branchId && Schema::hasTable("appointments_branch_{$branchId}")) {
+                $rows = DB::table("appointments_branch_{$branchId}")->get();
+                return response()->json($rows);
+            }
+
+            $table = Schema::hasTable('appointment_all') ? 'appointment_all' : 'appointment';
+            $query = DB::table($table);
+            if ($branchId && Schema::hasColumn($table, 'branch_id')) {
+                $query->where('branch_id', (string) $branchId);
+            }
+
+            $rows = $query->get();
             return response()->json($rows);
         } catch (\Throwable $e) {
             return response()->json(['error' => 'Failed to fetch appointments'], 500);

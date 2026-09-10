@@ -189,12 +189,16 @@ class PaymentController extends Controller
     /**
      * GET /api/payments/by-client/{clientId}
      */
-    public function paymentsByClient(int $clientId)
+    public function paymentsByClient(Request $request, int $clientId)
     {
         try {
-            $payments = Payment::where('client_id', $clientId)
-                ->orderByDesc('id')
-                ->get();
+            $query = Payment::where('client_id', $clientId);
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+
+            $payments = $query->orderByDesc('id')->get();
 
             return response()->json([
                 'success' => true,

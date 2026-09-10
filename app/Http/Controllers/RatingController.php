@@ -46,9 +46,19 @@ class RatingController extends Controller
     /**
      * GET /api/reviewsdoctor
      */
-    public function getAllReviews()
+    public function getAllReviews(Request $request)
     {
         try {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            if ($branchId) {
+                $rows = DB::table('reviewdoctor as r')
+                    ->join('tutors as t', 'r.doctor_id', '=', 't.id')
+                    ->where('t.branch_id', (string) $branchId)
+                    ->select('r.*')
+                    ->get();
+                return response()->json($rows);
+            }
+
             $rows = DB::table('reviewdoctor')->get();
             return response()->json($rows);
         } catch (\Throwable $e) {
@@ -85,12 +95,18 @@ class RatingController extends Controller
     /**
      * GET /api/reviewsdoctorcount
      */
-    public function getAverageRatings()
+    public function getAverageRatings(Request $request)
     {
         try {
-            $rows = DB::table('tutors as t')
-                ->leftJoin('reviewdoctor as r', 't.id', '=', 'r.doctor_id')
-                ->select('t.id as doctor_id', DB::raw('AVG(r.rating) as average_rating'), DB::raw('COUNT(r.id) as review_count'))
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('tutors as t')
+                ->leftJoin('reviewdoctor as r', 't.id', '=', 'r.doctor_id');
+
+            if ($branchId) {
+                $query->where('t.branch_id', (string) $branchId);
+            }
+
+            $rows = $query->select('t.id as doctor_id', DB::raw('AVG(r.rating) as average_rating'), DB::raw('COUNT(r.id) as review_count'))
                 ->groupBy('t.id')
                 ->orderByDesc('average_rating')
                 ->get();

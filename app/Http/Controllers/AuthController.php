@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
@@ -496,7 +497,8 @@ class AuthController extends Controller
     public function contractor_availabilityAPIGET(Request $request, $id)
     {
         try {
-            $res = $this->tutorCruncher->get("/contractor_availability/?contractor={$id}");
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->get("/contractor_availability/?contractor={$id}", [], $branchId, 'Contractors');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -509,7 +511,8 @@ class AuthController extends Controller
     public function AllContractorsavailability(Request $request)
     {
         try {
-            $res = $this->tutorCruncher->get('/contractor_availability/');
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->get('/contractor_availability/', $request->query(), $branchId, 'Contractors');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -519,10 +522,15 @@ class AuthController extends Controller
     /**
      * GET /api/availabilityalldata
      */
-    public function Getallavailability()
+    public function Getallavailability(Request $request)
     {
         try {
-            $rows = DB::table('availabilityslot')->get();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('availabilityslot');
+            if ($branchId && Schema::hasColumn('availabilityslot', 'branch_id')) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            $rows = $query->get();
             return response()->json($rows);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -563,10 +571,14 @@ class AuthController extends Controller
     /**
      * GET /api/clientDataget
      */
-    public function ClientsetDatabae()
+    public function ClientsetDatabae(Request $request)
     {
-        $clients = Client::all();
-        return response()->json($clients);
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+        $query = Client::query();
+        if ($branchId) {
+            $query->where('branch_id', (string) $branchId);
+        }
+        return response()->json($query->get());
     }
 
     /**
@@ -575,7 +587,8 @@ class AuthController extends Controller
     public function subjectsAPIGET(Request $request)
     {
         try {
-            $data = $this->tutorCruncher->get('/subjects/');
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $data = $this->tutorCruncher->get('/subjects/', $request->query(), $branchId, 'Subjects');
             return response()->json($data);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -585,11 +598,15 @@ class AuthController extends Controller
     /**
      * GET /api/subjectsalldata
      */
-    public function GetAlldatasubject()
+    public function GetAlldatasubject(Request $request)
     {
         try {
-            $rows = DB::table('subjectall')->get();
-            return response()->json($rows);
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('subjectall');
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            return response()->json($query->get());
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -601,7 +618,8 @@ class AuthController extends Controller
     public function locationAPIGET(Request $request)
     {
         try {
-            $data = $this->tutorCruncher->get('/locations/');
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $data = $this->tutorCruncher->get('/locations/', $request->query(), $branchId, 'Branch');
             return response()->json($data);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -611,11 +629,15 @@ class AuthController extends Controller
     /**
      * GET /api/locationalldata
      */
-    public function GetAlldatalocation()
+    public function GetAlldatalocation(Request $request)
     {
         try {
-            $rows = DB::table('location')->get();
-            return response()->json($rows);
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('location');
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            return response()->json($query->get());
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -642,7 +664,8 @@ class AuthController extends Controller
     public function appointmentputApi(Request $request, $id)
     {
         try {
-            $res = $this->tutorCruncher->put("/appointments/{$id}/", $request->all(), null, 'Appointment');
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->put("/appointments/{$id}/", $request->all(), $branchId, 'Appointment');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -655,7 +678,8 @@ class AuthController extends Controller
     public function appointmentfilterApi(Request $request, $id)
     {
         try {
-            $res = $this->tutorCruncher->get("/appointments/{$id}/");
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->get("/appointments/{$id}/", [], $branchId, 'Appointment');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -684,7 +708,8 @@ class AuthController extends Controller
     public function appointmentsAPIGET(Request $request)
     {
         try {
-            $res = $this->tutorCruncher->get('/appointments/', $request->query());
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->get('/appointments/', $request->query(), $branchId, 'Appointment');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -708,10 +733,11 @@ class AuthController extends Controller
     /**
      * GET /api/services/{id}
      */
-    public function servicesAPIgetbyid($id)
+    public function servicesAPIgetbyid(Request $request, $id)
     {
         try {
-            $res = $this->tutorCruncher->get("/services/{$id}/");
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $res = $this->tutorCruncher->get("/services/{$id}/", [], $branchId, 'Services');
             return response()->json($res);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
@@ -721,9 +747,9 @@ class AuthController extends Controller
     /**
      * GET /api/service/{id}
      */
-    public function getbyidShowService($id)
+    public function getbyidShowService(Request $request, $id)
     {
-        return $this->servicesAPIgetbyid($id);
+        return $this->servicesAPIgetbyid($request, $id);
     }
 
     /**
@@ -795,9 +821,14 @@ class AuthController extends Controller
     /**
      * GET /api/client-packages/{clientid}
      */
-    public function getClientPackageByClientId($clientid)
+    public function getClientPackageByClientId(Request $request, $clientid)
     {
-        $pkgs = ClientPackageData::where('clientid', $clientid)->get();
+        $query = ClientPackageData::where('clientid', $clientid);
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+        if ($branchId && Schema::hasColumn('client_package_data', 'branch_id')) {
+            $query->where('branch_id', (string) $branchId);
+        }
+        $pkgs = $query->get();
         return response()->json($pkgs);
     }
 
@@ -867,9 +898,14 @@ class AuthController extends Controller
     /**
      * GET /api/client-packagesfree/{clientid}
      */
-    public function getClientPackageByClientIdtwo($clientid)
+    public function getClientPackageByClientIdtwo(Request $request, $clientid)
     {
-        $rows = ClientPackageDataTwo::where('clientid', $clientid)->get();
+        $query = ClientPackageDataTwo::where('clientid', $clientid);
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+        if ($branchId && Schema::hasColumn('client_package_data_two', 'branch_id')) {
+            $query->where('branch_id', (string) $branchId);
+        }
+        $rows = $query->get();
         return response()->json($rows);
     }
 

@@ -7,6 +7,7 @@ use App\Models\Holiday;
 use App\Models\ClientTermsAcceptance;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class PackageController extends Controller
 {
@@ -43,10 +44,15 @@ class PackageController extends Controller
     /**
      * GET /api/allpackega
      */
-    public function PackegaAllshow()
+    public function PackegaAllshow(Request $request)
     {
         try {
-            $rows = DB::table('packega')->get();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('packega');
+            if ($branchId && Schema::hasColumn('packega', 'branch_id')) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            $rows = $query->get();
             return response()->json($rows);
         } catch (\Throwable $e) {
             return response()->json(['message' => 'Error fetching all packega'], 500);
@@ -90,7 +96,12 @@ class PackageController extends Controller
         }
 
         try {
-            $rows = DB::table('packega')->get();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+            $query = DB::table('packega');
+            if ($branchId && Schema::hasColumn('packega', 'branch_id')) {
+                $query->where('branch_id', (string) $branchId);
+            }
+            $rows = $query->get();
 
             $updatedPackages = $rows->map(function ($pkg) use ($level, $student, $studyType) {
                 if ($level <= 9) {
