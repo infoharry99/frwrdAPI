@@ -60,6 +60,7 @@ Route::get('/filter_tutor', [AuthController::class, 'FilterTutor']);
 Route::get('/subjects', [AuthController::class, 'subjectsAPIGET']);
 Route::get('/subjectsalldata', [AuthController::class, 'GetAlldatasubject']);
 Route::match(['get', 'post'], '/subjectFilter', [AuthController::class, 'ClientSubjectnameFilterData']);
+Route::match(['get', 'post'], '/subjectFilter/', [AuthController::class, 'ClientSubjectnameFilterData']);
 Route::get('/location', [AuthController::class, 'locationAPIGET']);
 Route::get('/locationalldata', [AuthController::class, 'GetAlldatalocation']);
 Route::get('/countries', [AuthController::class, 'saveAllCountry']);

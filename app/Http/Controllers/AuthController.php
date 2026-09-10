@@ -498,8 +498,12 @@ class AuthController extends Controller
     {
         try {
             $branchId = $request->query('branch_id') ?? $request->input('branch_id');
-            $res = $this->tutorCruncher->get("/contractor_availability/?contractor={$id}", [], $branchId, 'Contractors');
-            return response()->json($res);
+            $res = $this->tutorCruncher->get("/contractor_availability/{$id}/", [], $branchId, 'Contractors');
+            return response()->json([
+                'success' => true,
+                'message' => 'Contractor availability fetched successfully.',
+                'data' => $res,
+            ]);
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
@@ -863,7 +867,73 @@ class AuthController extends Controller
      */
     public function ClientSubjectnameFilterData(Request $request)
     {
-        return response()->json(['success' => true, 'data' => []]);
+        $subjectNames = $request->input('subjectNames');
+        $branchId = $request->input('branch_id') ?? $request->query('branch_id');
+        $yearLevels = $request->input('yearLevels');
+
+        if (!$subjectNames || (is_array($subjectNames) && count($subjectNames) === 0)) {
+            return response()->json(['error' => 'subjectNames is required'], 400);
+        }
+
+        if (!$branchId) {
+            return response()->json(['error' => 'branch_id is required'], 400);
+        }
+
+        try {
+            $rows = DB::table('tutors')->where('branch_id', (string) $branchId)->get();
+
+            $subjectArray = is_array($subjectNames) ? $subjectNames : [$subjectNames];
+            $yearArray = $yearLevels
+                ? (is_array($yearLevels) ? array_map(fn($y) => trim((string)$y), $yearLevels) : [trim((string)$yearLevels)])
+                : [];
+
+            $filteredAvailabilities = [];
+
+            foreach ($rows as $tutor) {
+                try {
+                    $skills = [];
+                    if (!empty($tutor->skills) && str_starts_with(trim($tutor->skills), '[')) {
+                        $skills = json_decode($tutor->skills, true) ?: [];
+                    }
+
+                    if (empty($tutor->availability)) continue;
+
+                    $availability = json_decode($tutor->availability, true);
+                    if (!is_array($availability)) continue;
+
+                    foreach ($skills as $skill) {
+                        $skillSubject = $skill['subject'] ?? '';
+                        $subjectMatch = in_array($skillSubject, $subjectArray);
+
+                        $yearMatch = false;
+                        if (empty($yearArray)) {
+                            $yearMatch = true;
+                        } elseif (!empty($skill['quallevel'])) {
+                            if (preg_match('/Year\s*(\d+)/i', $skill['quallevel'], $matches)) {
+                                $yearMatch = in_array($matches[1], $yearArray);
+                            }
+                        }
+
+                        if ($subjectMatch && $yearMatch) {
+                            foreach ($availability as $slot) {
+                                $filteredAvailabilities[] = array_merge($slot, [
+                                    'tutor_id' => $tutor->id,
+                                    'tutor_name' => "{$tutor->first_name} {$tutor->last_name}",
+                                    'subject' => $skillSubject,
+                                    'year' => $skill['quallevel'] ?? null,
+                                ]);
+                            }
+                        }
+                    }
+                } catch (\Throwable $err) {
+                    // skip tutor on parse error
+                }
+            }
+
+            return response()->json($filteredAvailabilities);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Internal server error'], 500);
+        }
     }
 
     /**
