@@ -1,0 +1,59 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # ===================================================
+    # 1. CORS HEADERS (Preflight & Cross-Origin Allowance)
+    # ===================================================
+    <IfModule mod_headers.c>
+        SetEnvIfNoCase Origin "https?://(localhost:[0-9]+|127\.0\.0\.1:[0-9]+|.*\.frwrdtutors\.com|.*\.smplyrefer\.com|.*\.nexteck\.uk)$" CORS_ORIGIN=$0
+        Header always set Access-Control-Allow-Origin "%{CORS_ORIGIN}e" env=CORS_ORIGIN
+        Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        Header always set Access-Control-Allow-Headers "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Auth-Token"
+        Header always set Access-Control-Allow-Credentials "true" env=CORS_ORIGIN
+        Header always set Access-Control-Max-Age "86400"
+    </IfModule>
+
+    # ===================================================
+    # 2. Block Direct Access to Sensitive Files (.env, etc.)
+    # ===================================================
+    RewriteRule ^(\.env|\.git|composer\.(json|lock)|package\.(json|lock)|phpunit\.xml) - [F,L,NC]
+
+    # ===================================================
+    # 3. Handle OPTIONS Preflight Directly
+    # ===================================================
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ public/index.php [QSA,L]
+
+    # ===================================================
+    # 4. Handle Authorization Header
+    # ===================================================
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # ===================================================
+    # 5. Serve Existing Files from public/ Folder
+    # ===================================================
+    RewriteCond %{DOCUMENT_ROOT}/public/$1 -f
+    RewriteRule ^(.*)$ public/$1 [L]
+
+    # ===================================================
+    # 6. Route All Remaining Requests to public/index.php
+    # ===================================================
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^(.*)$ public/index.php [L]
+
+    RewriteRule ^$ public/index.php [L]
+</IfModule>
+
+# php -- BEGIN cPanel-generated handler, do not edit
+# Set the “ea-php82” package as the default “PHP” programming language.
+<IfModule mime_module>
+  AddHandler application/x-httpd-ea-php82 .php .php8 .phtml
+</IfModule>
+# php -- END cPanel-generated handler, do not edit
