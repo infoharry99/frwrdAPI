@@ -411,24 +411,68 @@ class AuthController extends Controller
      */
     public function clientemailsend(Request $request)
     {
-        $to = $request->input('to');
-        $subject = $request->input('subject', 'Notification');
-        $html = $request->input('html', '');
-        $clientId = $request->input('client_id');
+        $email = $request->input('email') ?? $request->input('to');
+        $type = $request->input('type', 'support');
+
+        if (!$email) {
+            return response()->json(['error' => 'Email is required.'], 400);
+        }
 
         try {
-            Mail::html($html, function ($msg) use ($to, $subject) {
-                $msg->to($to)->subject($subject);
-            });
+            $client = Client::where('email', $email)->first();
+            if (!$client) {
+                return response()->json(['error' => 'No client found with this email.'], 404);
+            }
 
-            EmailLog::create([
-                'client_id' => $clientId,
-                'email' => $to,
-                'subject' => $subject,
-                'type' => 'custom',
-                'status' => 'sent',
-                'created_at' => now(),
-            ]);
+            $firstname = $client->firstname ?? 'Client';
+            $clientid = $client->clientid ?? null;
+
+            if ($type === 'terms_accepted') {
+                $clientSubject = 'Terms & Conditions Accepted – FRWRD Tutors';
+                $clientHTML = "
+                <div style='background-color:#f4f4ff;padding:24px;'>
+                  <div style='max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;padding:32px 24px;font-family:Arial, sans-serif;color:#333;'>
+                    <h2 style='color:#49479D;'>Hello {$firstname},</h2>
+                    <p>Thank you for accepting the <strong>FRWRD Tutors Terms & Conditions</strong>.</p>
+                    <p>Your acceptance has been successfully recorded in our system.</p>
+                    <br>
+                    <p style='font-size:14px; color:#777;'>Warm regards,<br><strong>FRWRD Tutors Support Team</strong></p>
+                  </div>
+                </div>";
+            } else {
+                $clientSubject = 'FRWRD Tutors Support';
+                $clientHTML = "
+                <div style='background-color:#f4f4ff;padding:24px;'>
+                  <div style='max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;padding:32px 24px;font-family:Arial, sans-serif;color:#333;'>
+                    <h2 style='color:#49479D;'>Hello {$firstname},</h2>
+                    <p>Thank you for contacting <strong>FRWRD Tutors</strong>.</p>
+                    <p>We have successfully received your request and our support team is currently reviewing it.</p>
+                    <br>
+                    <p style='font-size:14px; color:#777;'>Warm regards,<br><strong>FRWRD Tutors Support Team</strong></p>
+                  </div>
+                </div>";
+            }
+
+            try {
+                Mail::html($clientHTML, function ($msg) use ($email, $clientSubject) {
+                    $msg->to($email)->subject($clientSubject);
+                });
+            } catch (\Throwable $mailErr) {
+                // Ignore email sending error if SMTP credentials are missing
+            }
+
+            try {
+                EmailLog::create([
+                    'client_id' => $clientid,
+                    'email' => $email,
+                    'subject' => $clientSubject,
+                    'type' => $type,
+                    'status' => 'sent',
+                    'created_at' => now(),
+                ]);
+            } catch (\Throwable $logErr) {
+                // Ignore log error
+            }
 
             return response()->json(['success' => true, 'message' => 'Email sent']);
         } catch (\Throwable $e) {
@@ -441,11 +485,45 @@ class AuthController extends Controller
      */
     public function getClientById($clientid)
     {
-        $client = Client::where('clientid', $clientid)->first();
-        if (!$client) {
-            return response()->json(['message' => 'Client not found'], 404);
+        if (!$clientid) {
+            return response()->json(['error' => 'clientid is required in the URL.'], 400);
         }
-        return response()->json($client);
+
+        try {
+            $client = Client::where('clientid', $clientid)->first();
+            if (!$client) {
+                return response()->json(['error' => 'Client not found.'], 404);
+            }
+
+            $studentdetails = [];
+            if (!empty($client->studentdetails)) {
+                if (is_array($client->studentdetails)) {
+                    $studentdetails = $client->studentdetails;
+                } else {
+                    $parsed = json_decode($client->studentdetails, true);
+                    if ($parsed !== null) {
+                        $studentdetails = is_array($parsed) && isset($parsed[0]) ? $parsed : [$parsed];
+                    }
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'status' => $client->status,
+                'numberofstudent' => $client->numberofstudent,
+                'client' => [
+                    'clientid' => $client->clientid,
+                    'status' => $client->status,
+                    'firstname' => $client->firstname,
+                    'lastname' => $client->lastname,
+                    'email' => $client->email,
+                    'numberofstudent' => $client->numberofstudent,
+                    'studentdetails' => $studentdetails,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Internal server error.'], 500);
+        }
     }
 
     /**
@@ -546,21 +624,105 @@ class AuthController extends Controller
      */
     public function FilterTutor(Request $request)
     {
+        $subject = $request->query('subject') ?? $request->input('subject');
+        $date = $request->query('date') ?? $request->input('date');
+        $time = $request->query('time') ?? $request->input('time');
+        $quallevel = $request->query('quallevel') ?? $request->input('quallevel');
+        $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+        if (!$subject || !$date || !$time) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Subject, date, and time are required.',
+            ], 400);
+        }
+
+        if (!$branchId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'branch_id is required.',
+            ], 400);
+        }
+
         try {
-            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
-            $query = DB::table('tutors');
+            $rows = DB::table('tutors')
+                ->where(function($q) use ($branchId) {
+                    $q->where('branch_id', (string) $branchId)
+                      ->orWhere('branch_id', (int) $branchId);
+                })
+                ->get();
 
-            if ($branchId) {
-                $query->where('branch_id', (string) $branchId);
+            $requestedStr = trim("{$date} {$time}");
+            $requestedTs = strtotime($requestedStr);
+
+            $matchedTutors = [];
+
+            foreach ($rows as $tutor) {
+                $skills = [];
+                $availability = [];
+
+                if (!empty($tutor->skills)) {
+                    $skills = is_array($tutor->skills) ? $tutor->skills : json_decode($tutor->skills, true);
+                }
+                if (!empty($tutor->availability)) {
+                    $availability = is_array($tutor->availability) ? $tutor->availability : json_decode($tutor->availability, true);
+                }
+
+                if (!is_array($skills) || !is_array($availability)) {
+                    continue;
+                }
+
+                $hasValidSkill = false;
+                foreach ($skills as $skill) {
+                    $skillSubject = $skill['subject'] ?? '';
+                    $subjectMatch = strtolower(trim($skillSubject)) === strtolower(trim($subject));
+
+                    $yearMatch = true;
+                    if ($quallevel && !empty($skill['quallevel'])) {
+                        $yearMatch = strtolower(trim($skill['quallevel'])) === strtolower(trim($quallevel));
+                    }
+
+                    if ($subjectMatch && $yearMatch) {
+                        $hasValidSkill = true;
+                        break;
+                    }
+                }
+
+                if (!$hasValidSkill) {
+                    continue;
+                }
+
+                $isAvailable = false;
+                foreach ($availability as $slot) {
+                    if (empty($slot['start']) || empty($slot['finish'])) {
+                        continue;
+                    }
+
+                    $startTs = strtotime(substr($slot['start'], 0, 16));
+                    $finishTs = strtotime(substr($slot['finish'], 0, 16));
+
+                    if ($requestedTs !== false && $startTs !== false && $finishTs !== false) {
+                        if ($requestedTs >= $startTs && $requestedTs < $finishTs) {
+                            $isAvailable = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($isAvailable) {
+                    $matchedTutors[] = $tutor;
+                }
             }
 
-            if ($request->has('subject')) {
-                $query->where('skills', 'like', '%' . $request->query('subject') . '%');
-            }
-
-            return response()->json($query->orderByDesc('created_at')->get());
-        } catch (\Throwable $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => true,
+                'data' => array_values($matchedTutors),
+            ]);
+        } catch (\Throwable $err) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal Server Error',
+            ], 500);
         }
     }
 
@@ -859,7 +1021,39 @@ class AuthController extends Controller
      */
     public function autoStatusCheck(Request $request)
     {
-        return response()->json(['success' => true, 'status' => 'active']);
+        $clientid = $request->query('clientid') ?? $request->input('clientid');
+
+        if (!$clientid) {
+            return response()->json(['error' => 'clientid is required'], 400);
+        }
+
+        try {
+            $client = Client::where('clientid', $clientid)->first();
+            if (!$client) {
+                return response()->json(['error' => 'Client not found in client table'], 404);
+            }
+
+            $hasPackage = false;
+            if (Schema::hasTable('client_package_data')) {
+                $hasPackage = DB::table('client_package_data')->where('clientid', $clientid)->exists();
+            }
+            if (!$hasPackage && Schema::hasTable('alldatasend')) {
+                $hasPackage = DB::table('alldatasend')->where('client_id', $clientid)->orWhere('clientid', $clientid)->exists();
+            }
+
+            $newStatus = $hasPackage ? 'existing_user' : 'new_user';
+
+            Client::where('clientid', $clientid)->update(['status' => $newStatus]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Client status set to '{$newStatus}'",
+                'clientid' => $clientid,
+                'status' => $newStatus,
+            ], 200);
+        } catch (\Throwable $err) {
+            return response()->json(['error' => 'Internal server error'], 500);
+        }
     }
 
     /**
@@ -880,7 +1074,12 @@ class AuthController extends Controller
         }
 
         try {
-            $rows = DB::table('tutors')->where('branch_id', (string) $branchId)->get();
+            $rows = DB::table('tutors')
+                ->where(function($q) use ($branchId) {
+                    $q->where('branch_id', (string) $branchId)
+                      ->orWhere('branch_id', (int) $branchId);
+                })
+                ->get();
 
             $subjectArray = is_array($subjectNames) ? $subjectNames : [$subjectNames];
             $yearArray = $yearLevels
@@ -892,13 +1091,13 @@ class AuthController extends Controller
             foreach ($rows as $tutor) {
                 try {
                     $skills = [];
-                    if (!empty($tutor->skills) && str_starts_with(trim($tutor->skills), '[')) {
-                        $skills = json_decode($tutor->skills, true) ?: [];
+                    if (!empty($tutor->skills)) {
+                        $skills = is_array($tutor->skills) ? $tutor->skills : (json_decode($tutor->skills, true) ?: []);
                     }
 
                     if (empty($tutor->availability)) continue;
 
-                    $availability = json_decode($tutor->availability, true);
+                    $availability = is_array($tutor->availability) ? $tutor->availability : json_decode($tutor->availability, true);
                     if (!is_array($availability)) continue;
 
                     foreach ($skills as $skill) {
@@ -909,19 +1108,26 @@ class AuthController extends Controller
                         if (empty($yearArray)) {
                             $yearMatch = true;
                         } elseif (!empty($skill['quallevel'])) {
-                            if (preg_match('/Year\s*(\d+)/i', $skill['quallevel'], $matches)) {
+                            $qlStr = (string)$skill['quallevel'];
+                            if (preg_match('/Year\s*(\d+)/i', $qlStr, $matches)) {
                                 $yearMatch = in_array($matches[1], $yearArray);
+                            } elseif (preg_match('/(\d+)/', $qlStr, $matches)) {
+                                $yearMatch = in_array($matches[1], $yearArray);
+                            } else {
+                                $yearMatch = in_array(trim($qlStr), $yearArray);
                             }
                         }
 
                         if ($subjectMatch && $yearMatch) {
                             foreach ($availability as $slot) {
-                                $filteredAvailabilities[] = array_merge($slot, [
-                                    'tutor_id' => $tutor->id,
-                                    'tutor_name' => "{$tutor->first_name} {$tutor->last_name}",
-                                    'subject' => $skillSubject,
-                                    'year' => $skill['quallevel'] ?? null,
-                                ]);
+                                if (is_array($slot)) {
+                                    $filteredAvailabilities[] = array_merge($slot, [
+                                        'tutor_id' => $tutor->id,
+                                        'tutor_name' => "{$tutor->first_name} {$tutor->last_name}",
+                                        'subject' => $skillSubject,
+                                        'year' => $skill['quallevel'] ?? null,
+                                    ]);
+                                }
                             }
                         }
                     }
@@ -949,7 +1155,43 @@ class AuthController extends Controller
      */
     public function priceStatuseclientid($clientid)
     {
-        return response()->json(['success' => true, 'price_status' => 'paid']);
+        try {
+            $row = null;
+            if (Schema::hasTable('alldatasend')) {
+                $row = DB::table('alldatasend')
+                    ->where(function($q) use ($clientid) {
+                        $q->where('client_id', $clientid)->orWhere('clientid', $clientid);
+                    })
+                    ->where('pricestatus', 1)
+                    ->first();
+            }
+            if (!$row && Schema::hasTable('client_package_data')) {
+                $row = DB::table('client_package_data')
+                    ->where('clientid', $clientid)
+                    ->where('purches_status', 1)
+                    ->first();
+            }
+
+            if (!$row) {
+                return response()->json([
+                    'status' => 404,
+                    'message' => "No records found for client_id: {$clientid} with pricestatus = 1",
+                    'pricestatus' => 0,
+                ], 404);
+            }
+
+            return response()->json([
+                'status' => 200,
+                'message' => "Pricestatus values for client_id: {$clientid}",
+                'pricestatus' => $row->pricestatus ?? 1,
+            ], 200);
+        } catch (\Throwable $error) {
+            return response()->json([
+                'status' => 404,
+                'message' => "No records found for client_id: {$clientid} with pricestatus = 1",
+                'pricestatus' => 0,
+            ], 404);
+        }
     }
 
     /**
@@ -959,9 +1201,18 @@ class AuthController extends Controller
     {
         try {
             $row = ClientPackageDataTwo::create($request->all());
-            return response()->json(['success' => true, 'data' => $row], 201);
+            return response()->json([
+                'success' => true,
+                'message' => 'Client package saved successfully',
+                'insertId' => $row->id ?? null,
+                'data' => $row,
+            ], 201);
         } catch (\Throwable $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Server error while saving package data',
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -1044,8 +1295,42 @@ class AuthController extends Controller
      */
     public function FreeAssismentstatuscheck($client_id)
     {
-        $hasFree = ClientPackageDataTwo::where('clientid', $client_id)->exists();
-        return response()->json(['status' => $hasFree ? 'booked' : 'available']);
+        try {
+            if (!$client_id) {
+                return response()->json(['success' => false, 'error' => 'client_id is required'], 400);
+            }
+
+            $row = null;
+            if (Schema::hasTable('alldatasend')) {
+                $row = DB::table('alldatasend')
+                    ->where(function($q) use ($client_id) {
+                        $q->where('client_id', $client_id)->orWhere('clientid', $client_id);
+                    })
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+            if (!$row && Schema::hasTable('client_package_data')) {
+                $row = DB::table('client_package_data')
+                    ->where('clientid', $client_id)
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+
+            if (!$row) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No record found for this client_id',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'client_id' => $client_id,
+                'freeassismentemailsend' => $row->freeassismentemailsend ?? 0,
+            ], 200);
+        } catch (\Throwable $error) {
+            return response()->json(['success' => false, 'error' => 'Internal server error'], 500);
+        }
     }
 
     /**

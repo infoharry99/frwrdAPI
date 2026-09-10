@@ -41,6 +41,7 @@ Route::post('/clients', [AuthController::class, 'clientAPIPOST']);
 Route::post('/students', [AuthController::class, 'studentCreate']);
 Route::post('/enquiry', [AuthController::class, 'enquiryAPIPOST']);
 Route::post('/clientemailsend', [AuthController::class, 'clientemailsend']);
+Route::post('/clientemailsend/', [AuthController::class, 'clientemailsend']);
 Route::get('/clientsdata/{clientid}', [AuthController::class, 'getClientById']);
 Route::get('/clientDataget', [AuthController::class, 'ClientsetDatabae']);
 Route::get('/client/status-check', [AuthController::class, 'autoStatusCheck']);
@@ -97,6 +98,7 @@ Route::get('/client-packages/{clientid}', [AuthController::class, 'getClientPack
 Route::get('/client-packagesid/{id}', [AuthController::class, 'getClientPackageById']);
 Route::put('/client-packagesupdate/{id}', [AuthController::class, 'updateClientPackageById']);
 Route::post('/client-packagesfree', [AuthController::class, 'createClientPackageSingleTabletwo']);
+Route::post('/client-packagesfree/', [AuthController::class, 'createClientPackageSingleTabletwo']);
 Route::get('/client-packagesfree/{clientid}', [AuthController::class, 'getClientPackageByClientIdtwo']);
 Route::delete('/client-packagesfree/{id}', [AuthController::class, 'deleteClientPackageById']);
 Route::delete('/client-packagesclientid/{clientid}', [AuthController::class, 'deleteClientPackageByClientId']);
