@@ -14,5 +14,9 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::get('/', function () {
-    return view('welcome');
+    return response('Server is working!');
+});
+
+Route::get('/test', function () {
+    return response('Server is working!');
 });

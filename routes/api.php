@@ -14,11 +14,6 @@ use App\Http\Controllers\Admin\AppointmentsController as AdminAppointmentControl
 use App\Http\Controllers\Admin\RatingController as AdminRatingController;
 use App\Http\Controllers\Admin\CouponController as AdminCouponController;
 
-/*
-|--------------------------------------------------------------------------
-| Public & Client API Routes (/api/*)
-|--------------------------------------------------------------------------
-*/
 
 // Health & Server Test
 Route::get('/test', function () {
