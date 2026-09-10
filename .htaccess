@@ -1,5 +1,16 @@
 DirectoryIndex index.php public/index.php
 
+# Disable ModSecurity for API if allowed by host
+<IfModule mod_security2.c>
+    SecRuleEngine Off
+    SecFilterEngine Off
+    SecFilterScanPOST Off
+</IfModule>
+<IfModule mod_security.c>
+    SecFilterEngine Off
+    SecFilterScanPOST Off
+</IfModule>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
