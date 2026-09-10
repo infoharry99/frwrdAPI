@@ -453,7 +453,14 @@ class AuthController extends Controller
     public function GetallContractors(Request $request)
     {
         try {
-            $rows = DB::table('tutors')->get();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+            $query = DB::table('tutors');
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+
+            $rows = $query->orderByDesc('created_at')->get();
             return response()->json($rows);
         } catch (\Throwable $e) {
             return response()->json(['error' => 'Failed to fetch contractors'], 500);
@@ -463,10 +470,17 @@ class AuthController extends Controller
     /**
      * GET /api/contractorsbyid/{id}
      */
-    public function GetByIdContractors($id)
+    public function GetByIdContractors(Request $request, $id)
     {
         try {
-            $row = DB::table('tutors')->where('id', $id)->first();
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
+
+            $query = DB::table('tutors')->where('id', $id);
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+
+            $row = $query->first();
             if (!$row) {
                 return response()->json(['message' => 'Not found'], 404);
             }
@@ -521,11 +535,18 @@ class AuthController extends Controller
     public function FilterTutor(Request $request)
     {
         try {
+            $branchId = $request->query('branch_id') ?? $request->input('branch_id');
             $query = DB::table('tutors');
+
+            if ($branchId) {
+                $query->where('branch_id', (string) $branchId);
+            }
+
             if ($request->has('subject')) {
                 $query->where('skills', 'like', '%' . $request->query('subject') . '%');
             }
-            return response()->json($query->get());
+
+            return response()->json($query->orderByDesc('created_at')->get());
         } catch (\Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
