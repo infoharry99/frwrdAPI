@@ -927,6 +927,7 @@ class AuthController extends Controller
             $endDate = date('Y-m-d', strtotime('+6 months'));
 
             foreach ($contractorList as $contractor) {
+                usleep(200000); // 200ms delay to prevent TutorCruncher 429 rate limit
                 $contractorId = $contractor->id;
 
                 try {
@@ -1297,7 +1298,7 @@ class AuthController extends Controller
             }
             $mergedAppointments = array_values($uniqueMap);
 
-            // Join each appointment with alldatasend table where appoinmet_id = appt.id
+            // Join each appointment with alldatasend table where appoinmet_id = appt.id and pre-enrich service details
             $allData = [];
             foreach ($mergedAppointments as &$appt) {
                 $apptId = $appt['id'] ?? null;
@@ -1311,6 +1312,30 @@ class AuthController extends Controller
                 if ($dbRow) {
                     $appt['db'] = (array)$dbRow;
                     $allData[] = $appt;
+                }
+
+                // Pre-enrich service details if conjobs or rcrs missing
+                $serviceId = null;
+                if (isset($appt['service']) && is_numeric($appt['service'])) {
+                    $serviceId = $appt['service'];
+                } elseif (isset($appt['service']['id'])) {
+                    $serviceId = $appt['service']['id'];
+                }
+
+                if ($serviceId) {
+                    try {
+                        $svcData = $this->tutorCruncher->get("/services/{$serviceId}", [], $branchId, 'Service');
+                        if (is_array($svcData) && !isset($svcData['error'])) {
+                            if (!is_array($appt['service'])) {
+                                $appt['service'] = ['id' => $serviceId];
+                            }
+                            $appt['service']['conjobs'] = $svcData['conjobs'] ?? ($appt['service']['conjobs'] ?? []);
+                            $appt['service']['rcrs'] = $svcData['rcrs'] ?? ($appt['service']['rcrs'] ?? []);
+                            $appt['service']['name'] = $svcData['name'] ?? ($appt['service']['name'] ?? '');
+                        }
+                    } catch (\Throwable $e) {
+                        // ignore single service fetch warning
+                    }
                 }
             }
             unset($appt);
@@ -1451,6 +1476,7 @@ class AuthController extends Controller
                 $countriesList = $data['results'] ?? [];
 
                 foreach ($countriesList as $country) {
+                    usleep(200000); // 200ms delay to prevent 429 rate limit
                     $countryId = $country['id'];
                     $detailRes = Http::withHeaders([
                         'Authorization' => "Token {$apiKey}",
@@ -1518,6 +1544,7 @@ class AuthController extends Controller
 
             $contractorList = $res->json()['results'] ?? [];
             foreach ($contractorList as $contractor) {
+                usleep(200000); // 200ms delay to prevent 429 rate limit
                 $contractorId = $contractor['id'];
                 $availRes = Http::withHeaders([
                     'Authorization' => "Token {$apiKey}",
@@ -2029,8 +2056,11 @@ class AuthController extends Controller
      */
     public function getClientBookData($id)
     {
-        $pkg = ClientPackageData::where('clientid', $id)->first();
-        return response()->json($pkg);
+        $rows = ClientPackageData::where('clientid', $id)->orderBy('created_at', 'desc')->get();
+        return response()->json([
+            'success' => true,
+            'data' => $rows,
+        ]);
     }
 
     /**
@@ -2074,6 +2104,7 @@ class AuthController extends Controller
                 if (empty($students) || !is_array($students)) continue;
 
                 foreach ($students as $st) {
+                    usleep(200000); // 200ms delay to prevent 429 rate limit
                     $studentId = $st['id'] ?? null;
                     if (!$studentId) continue;
 

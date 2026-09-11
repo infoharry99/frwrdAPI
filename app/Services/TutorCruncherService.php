@@ -5,6 +5,7 @@ namespace App\Services;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class TutorCruncherService
 {
@@ -31,14 +32,30 @@ class TutorCruncherService
     }
 
     /**
-     * Perform GET request to TutorCruncher API.
+     * Perform GET request to TutorCruncher API with caching & 429 retry backoff.
      */
     public function get(string $endpoint, array $query = [], ?string $branchId = null, string $action = ''): array
+    {
+        $cacheKey = 'tc_get_' . md5($endpoint . '_' . json_encode($query) . '_' . ($branchId ?? '') . '_' . $action);
+
+        // Cache single item lookups like /services/{id} or /contractors/{id} for 60 seconds
+        if (str_contains($endpoint, '/services/') || str_contains($endpoint, '/contractors/')) {
+            return Cache::remember($cacheKey, 60, function () use ($endpoint, $query, $branchId, $action) {
+                return $this->executeGetRequest($endpoint, $query, $branchId, $action);
+            });
+        }
+
+        return $this->executeGetRequest($endpoint, $query, $branchId, $action);
+    }
+
+    protected function executeGetRequest(string $endpoint, array $query = [], ?string $branchId = null, string $action = ''): array
     {
         $apiKey = $this->getApiKey($branchId, $action);
         $url = rtrim($this->baseUrl, '/') . '/' . ltrim($endpoint, '/');
 
-        $response = Http::withHeaders([
+        $response = Http::retry(3, 2000, function (\Exception $exception) {
+            return $exception instanceof \Illuminate\Http\Client\RequestException && $exception->response->status() === 429;
+        })->withHeaders([
             'Authorization' => "Token {$apiKey}",
             'Accept' => 'application/json',
         ])->get($url, $query);
@@ -52,14 +69,16 @@ class TutorCruncherService
     }
 
     /**
-     * Perform POST request to TutorCruncher API.
+     * Perform POST request to TutorCruncher API with 429 retry backoff.
      */
     public function post(string $endpoint, array $data = [], ?string $branchId = null, string $action = ''): array
     {
         $apiKey = $this->getApiKey($branchId, $action);
         $url = rtrim($this->baseUrl, '/') . '/' . ltrim($endpoint, '/');
 
-        $response = Http::withHeaders([
+        $response = Http::retry(3, 2000, function (\Exception $exception) {
+            return $exception instanceof \Illuminate\Http\Client\RequestException && $exception->response->status() === 429;
+        })->withHeaders([
             'Authorization' => "Token {$apiKey}",
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
@@ -74,14 +93,16 @@ class TutorCruncherService
     }
 
     /**
-     * Perform PUT/PATCH request to TutorCruncher API.
+     * Perform PUT/PATCH request to TutorCruncher API with 429 retry backoff.
      */
     public function put(string $endpoint, array $data = [], ?string $branchId = null, string $action = ''): array
     {
         $apiKey = $this->getApiKey($branchId, $action);
         $url = rtrim($this->baseUrl, '/') . '/' . ltrim($endpoint, '/');
 
-        $response = Http::withHeaders([
+        $response = Http::retry(3, 2000, function (\Exception $exception) {
+            return $exception instanceof \Illuminate\Http\Client\RequestException && $exception->response->status() === 429;
+        })->withHeaders([
             'Authorization' => "Token {$apiKey}",
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
